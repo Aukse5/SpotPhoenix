@@ -21,11 +21,12 @@ This application runs in a separate environment, consumes the RabbitMQ queue and
   * Silences Azure Monitor alerts for the specific VM (using azure.mgmt.alertsmanagement library).
 
 #### Module B : Resurrector
-* Extracts <i>VM_Name</i> and <i>Resource_Group</i> from the RabbitMQ message payload.
+* Extracts <i>vm_name</i>, <i>resource_group</i> and <i>subscription_id</i> from the RabbitMQ message payload.
 * Ensures the VM state is <i>Deallocated </i> (via azure-mgmt-compute) before initiating the restart loop to avoid API conflicts during the eviction process.
+* Uses the AZURE_COMPUTE_API_VERSION defined in the environment variables to construct the REST API requests.
 * Wait-and-Retry loop
   * Initiates a 10-minute cooldown period after eviction
-  * After the cooldown, enters a loop calling the vm.start() API
+  * After the cooldown, enters a loop calling the VM Start REST API (POST)
   * If capacity is unavailable, the module waits 10 minutes before retrying the start command
   * Repeats until capacity is available
 
@@ -86,5 +87,6 @@ RABBITMQ_PASS=guest
 #### Application Settings
 POLLING_INTERVAL=1  
 COOLDOWN_PERIOD=600
+AZURE_COMPUTE_API_VERSION=yyyy-mm-dd
 
 
