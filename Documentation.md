@@ -2,26 +2,26 @@
 
 ## Architecture overview
 
-### 1.Spot Phoenix Listener (On-Instance)
-* Python script deployed on the Spot VM.
+### 1.Spot Phoenix Listener (Docker Container On-Instance)
+* Python script deployed as a Docker Container on the Spot VM.
 * Polls the Azure Instance Metadata Service (IMDS) via non-routable IP '169.254.169.254'.
 * 1-second polling interval to maximize the 30 second eviction notice window.
 * On eviction notice:
   * Flushes system buffers to disk (via os.sync()) to prevent data corruption
   * Signals local services for graceful shutdown (SIGTERM)
-  * Publishes the eviction event to RabbitMQ
+  * Publishes the eviction event to Celery
 
 ### 2. Spot Phoenix (Docker Container)
-This application runs in a separate environment, consumes the RabbitMQ queue and triggers two concurrent workflows:
+This application runs in a separate environment, acts as a Celery worker and triggers two concurrent workflows:
 
 #### Module A : Worker
 * Uses threads for tasks for time efficiency.
-* Upon receiving an eviction message from RabbitMQ:
+* Upon receiving an eviction message from Celery:
   * Updates Azure Traffic Manager to set the endpoint status to <i>Disabled</i> (using azure-mgmt-trafficmanager library).
   * Silences Azure Monitor alerts for the specific VM (using azure.mgmt.alertsmanagement library).
 
 #### Module B : Resurrector
-* Extracts <i>vm_name</i>, <i>resource_group</i> and <i>subscription_id</i> from the RabbitMQ message payload.
+* Extracts <i>vm_name</i>, <i>resource_group</i> and <i>subscription_id</i> from the Celery task payload.
 * Ensures the VM state is <i>Deallocated </i> (via azure-mgmt-compute) before initiating the restart loop to avoid API conflicts during the eviction process.
 * Uses the AZURE_COMPUTE_API_VERSION defined in the environment variables to construct the REST API requests.
 * Wait-and-Retry loop
@@ -30,20 +30,61 @@ This application runs in a separate environment, consumes the RabbitMQ queue and
   * If capacity is unavailable, the module waits 10 minutes before retrying the start command
   * Repeats until capacity is available
 
+#### Sequence diagram
+
+```mermaid
+sequenceDiagram
+    participant IMDS as Azure IMDS
+    participant L as Spot Phoenix Listener (Docker on VM)
+
+    box "Spot Phoenix (Docker Environment)"
+      participant C as Celery Broker
+      participant W as Worker Module
+      participant R as Resurrector Module
+    end
+
+    participant AZ as Azure API
+
+    L->>IMDS: Poll 169.254.169.254 (1s interval)
+    IMDS-->>L: Eviction Notice
+    L->>L: os.sync() / SIGTERM
+
+    Note over L,C: Listener sends task out of the dying VM
+    L->>C: Dispatch Eviction Task
+    
+    par Concurrent Workflows
+        C->>W: Start Worker Module
+        W->>AZ: Disable Traffic Manager
+        W->>AZ: Silence Monitor Alerts
+    and
+        C->>R: Start Resurrector Module
+        R->>AZ: Wait until Deallocated
+        loop Start Retry Loop
+            R->>AZ: vm.start()
+            AZ-->>R: Capacity Error (Retry in 10m)
+        end
+    end
+    AZ-->>L: VM Back Online
+```
+
+#### Infrastructure diagram
+
 ```mermaid
 graph TD
     subgraph "Spot VM (On-Instance)"
         A[Spot VM] -->|Termination notice| L1[Spot Phoenix Listener]
         L1 -->|Local Action| MEM[os.sync / Log Flush]
-        L1 -->|Publishes| RMQ
     end
 
+    L1 -->|Network Call: Dispatch Task| CELERY
+
     subgraph "Spot Phoenix (Docker Container)"
-        RMQ{RabbitMQ} -->|Triggers| W[Worker Module]
+        CELERY{Celery Broker} -->|Triggers| W[Worker Module]
+        Celery -->|Triggers| R[Resurrector Module]
+
         W -->|API Call| ATM[Azure Traffic Manager]
         W -->|API Call| MON[Azure Monitor]
         
-        RMQ -->|Triggers| R[Resurrector Module]
         R --> C[10 min Cooldown]
         C --> S{Is Deallocated?}
         S -- No --> W1[Wait & Poll]
@@ -55,7 +96,7 @@ graph TD
     end
 ```
 
-### Message Schema (RabbitMQ Payload)
+### Message Schema (Celery Task Payload)
 
 To ensure the application can identify the resource and execute the correct contingency measures, the Listener will publish a JSON payload using the following structure:
 
@@ -71,7 +112,7 @@ To ensure the application can identify the resource and execute the correct cont
 
 ### Environment configuration (.env)
 
-To run the Spot Phoenix application, the following environment variables need to be configured. These will be used by DefaultAzureCredential to authenticate with the Azure API and to establish a connection with the message broker.
+To run the Spot Phoenix application, the following environment variables need to be configured. These will be used by DefaultAzureCredential to authenticate with the Azure API and to establish a connection with the Celery message broker.
 
 #### Azure Authentication
 AZURE_SUBSCRIPTION_ID=subscription-id-uuid  
@@ -79,10 +120,9 @@ AZURE_TENANT_ID=tenant-id-uuid
 AZURE_CLIENT_ID=service-principal-app-id  
 AZURE_CLIENT_SECRET=service-principal-password
 
-#### RabbitMQ Configuration
-RABBITMQ_HOST=rabbitmq-server-address  
-RABBITMQ_USER=guest  
-RABBITMQ_PASS=guest
+#### Celery Configuration
+CELERY_BROKER_URL=amqp://guest:guest@rabbitmq-server-address:5672//
+CELERY_RESULT_BACKEND=db+sqlite:///results.db
 
 #### Application Settings
 POLLING_INTERVAL=1  
