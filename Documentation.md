@@ -121,7 +121,7 @@ AZURE_CLIENT_ID=service-principal-app-id
 AZURE_CLIENT_SECRET=service-principal-password
 
 #### Celery Configuration
-CELERY_BROKER_URL=amqp://guest:guest@rabbitmq-server-address:5672//
+CELERY_BROKER_URL=amqp://guest:guest@rabbitmq-server-address:5672//  
 CELERY_RESULT_BACKEND=db+sqlite:///results.db
 
 #### Application Settings
