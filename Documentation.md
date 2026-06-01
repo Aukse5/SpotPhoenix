@@ -23,7 +23,7 @@ This application runs in a separate environment, acts as a Celery worker and tri
 #### Module B : Resurrector
 * Extracts <i>vm_name</i>, <i>resource_group</i> and <i>subscription_id</i> from the Celery task payload.
 * Ensures the VM state is <i>Deallocated </i> (via azure-mgmt-compute) before initiating the restart loop to avoid API conflicts during the eviction process.
-* Uses the AZURE_COMPUTE_API_VERSION defined in the environment variables to construct the REST API requests.
+* Uses the ComputeManagementClient provided by the Azure SDK to abstract and execute the underlying REST API operations.
 * Wait-and-Retry loop
   * Initiates a 10-minute cooldown period after eviction
   * After the cooldown, enters a loop calling the VM Start REST API (POST)
