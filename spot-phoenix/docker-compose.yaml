@@ -1,0 +1,31 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: phoenix-rabbitmq
+    ports:
+      - "5672:5672" # Core AMQP protocol port for Celery task queuing
+      - "15672:15672" # Web-based Management UI dashboard
+    environment:
+      # Securely map authentication credentials from the host's .env file
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    container_name: phoenix-redis
+    ports:
+      - "6379:6379" # Cache layer port utilized for task backends and distributed locking
+    restart: always
+
+  celery_worker:
+    build: .
+    container_name: phoenix-central-worker
+    restart: always
+    environment:
+      - C_FORCE_ROOT=1 # Permissions bypass to allow Celery operation within a root-owned container
+    depends_on:
+      - rabbitmq
+      - redis
+    env_file:
+      - .env # Automatically load and inject Azure secrets and broker connection URLs
