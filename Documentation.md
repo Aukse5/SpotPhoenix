@@ -89,9 +89,9 @@ graph TD
 
     L1 -->|Network Call: Dispatch Task| CELERY
 
-    subgraph "Spot Phoenix (Docker Container)"
+    subgraph "Spot Phoenix Core Infrastructure"
         CELERY{Celery Broker} -->|Triggers Threaded Tasks| W[Worker Module]
-        Celery -->|Triggers Background Task| R[Resurrector Module]
+        CELERY -->|Triggers Background Task| R[Resurrector Module]
 
         W -->|API Call| ATM[Azure Traffic Manager: Disable]
         W -->|API Call| MON[Azure Monitor: Suppress Alerts]
@@ -106,7 +106,7 @@ graph TD
         W2 --> AZ
 
         AZ -.->|Success| ATM_EN[Azure Traffic Manager: Enable]
-        ATM_EN -.-> A
+        ATM_EN -.->|System Recovered| A
     end
 ```
 
