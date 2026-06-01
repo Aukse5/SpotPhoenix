@@ -29,6 +29,7 @@ This application runs in a separate environment, acts as a Celery worker and tri
   * After the cooldown, enters a loop calling the VM Start REST API (POST)
   * If capacity is unavailable, the module waits 10 minutes before retrying the start command
   * Repeats until capacity is available
+  * Upon successful start, automatically restores the Azure Traffic Manager endpoint back to <i>Enabled</i> status.
 
 #### Sequence diagram
 
@@ -51,20 +52,31 @@ sequenceDiagram
 
     Note over L,C: Listener sends task out of the dying VM
     L->>C: Dispatch Eviction Task
-    
+
+    C ->>R: Trigger Resurrector immediately in background (.delay)
+    R->>R: Start 10m Cooldown Period
+
+    C->>W: Start Worker Module (Main Thread)
     par Concurrent Workflows
-        C->>W: Start Worker Module
         W->>AZ: Disable Traffic Manager
         W->>AZ: Silence Monitor Alerts
-    and
-        C->>R: Start Resurrector Module
-        R->>AZ: Wait until Deallocated
-        loop Start Retry Loop
-            R->>AZ: vm.start()
-            AZ-->>R: Capacity Error (Retry in 10m)
-        end
     end
-    AZ-->>L: VM Back Online
+
+    loop Status Checking
+        R->>AZ: Get instanceView (Check if PowerState/deallocated)
+        AZ-->>R: Return status codes
+    end
+
+    loop Start Retry Loop
+       R->>AZ: vm.start()
+       alt Capacity Error
+          AZ-->>R: Capacity Error (Wait 10m)
+          R->>R: Sleep 10m
+       else Success
+         AZ-->>R: VM Running
+    end
+    R->>AZ: Restore Traffic Manager to 'Enabled'
+    AZ-->>L: VM Back Online & Traffic Restored
 ```
 
 #### Infrastructure diagram
@@ -79,20 +91,23 @@ graph TD
     L1 -->|Network Call: Dispatch Task| CELERY
 
     subgraph "Spot Phoenix (Docker Container)"
-        CELERY{Celery Broker} -->|Triggers| W[Worker Module]
-        Celery -->|Triggers| R[Resurrector Module]
+        CELERY{Celery Broker} -->|Triggers Threaded Tasks| W[Worker Module]
+        Celery -->|Triggers Background Task| R[Resurrector Module]
 
-        W -->|API Call| ATM[Azure Traffic Manager]
-        W -->|API Call| MON[Azure Monitor]
+        W -->|API Call| ATM[Azure Traffic Manager: Disable]
+        W -->|API Call| MON[Azure Monitor: Suppress Alerts]
         
         R --> C[10 min Cooldown]
         C --> S{Is Deallocated?}
         S -- No --> W1[Wait & Poll]
         W1 --> S
+
         S -- Yes --> AZ[Azure Compute API: Start]
         AZ -- Capacity Error --> W2[Wait 10 min]
         W2 --> AZ
-        AZ -.->|Success| A
+
+        AZ -.->|Success| ATM_EN[Azure Traffic Manager: Enable]
+        ATM_EN -.-> A
     end
 ```
 
@@ -120,13 +135,15 @@ AZURE_TENANT_ID=tenant-id-uuid
 AZURE_CLIENT_ID=service-principal-app-id  
 AZURE_CLIENT_SECRET=service-principal-password
 
+#### RabbitMQ Configuration (Broker)
+RABBITMQ_DEFAULT_USER=your_rabbitmq_user  
+RABBITMQ_DEFAULT_PASS=your_secure_password
+
 #### Celery Configuration
-CELERY_BROKER_URL=amqp://guest:guest@rabbitmq-server-address:5672//  
-CELERY_RESULT_BACKEND=db+sqlite:///results.db
+CELERY_BROKER_URL=amqp://your_rabbitmq_user:your_secure_password@rabbitmq-server-address:5672//  
+CELERY_RESULT_BACKEND=redis://redis-server-address:6379/0
 
 #### Application Settings
-POLLING_INTERVAL=1  
 COOLDOWN_PERIOD=600
-AZURE_COMPUTE_API_VERSION=yyyy-mm-dd
 
 
