@@ -38,11 +38,9 @@ sequenceDiagram
     participant IMDS as Azure IMDS
     participant L as Spot Phoenix Listener (Docker on VM)
 
-    box "Spot Phoenix (Docker Environment)"
-      participant C as Celery Broker
-      participant W as Worker Module
-      participant R as Resurrector Module
-    end
+    participant C as Celery Broker
+    participant W as Worker Module
+    participant R as Resurrector Module
 
     participant AZ as Azure API
 
@@ -53,7 +51,7 @@ sequenceDiagram
     Note over L,C: Listener sends task out of the dying VM
     L->>C: Dispatch Eviction Task
 
-    C ->>R: Trigger Resurrector immediately in background (.delay)
+    C->>R: Trigger Resurrector immediately in background (.delay)
     R->>R: Start 10m Cooldown Period
 
     C->>W: Start Worker Module (Main Thread)
@@ -74,6 +72,7 @@ sequenceDiagram
           R->>R: Sleep 10m
        else Success
          AZ-->>R: VM Running
+       end
     end
     R->>AZ: Restore Traffic Manager to 'Enabled'
     AZ-->>L: VM Back Online & Traffic Restored
