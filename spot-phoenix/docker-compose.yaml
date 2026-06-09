@@ -1,10 +1,9 @@
 services:
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:3
     container_name: phoenix-rabbitmq
     ports:
       - "5672:5672" # Core AMQP protocol port for Celery task queuing
-      - "15672:15672" # Web-based Management UI dashboard
     environment:
       # Securely map authentication credentials from the host's .env file
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
