@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Thread
 from celery import Celery
 from azure.core.rest import HttpRequest
+from celery_config import app
 
 # Azure SDK Components
 from azure.identity import DefaultAzureCredential
@@ -12,25 +13,6 @@ from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.trafficmanager import TrafficManagerManagementClient
 from azure.mgmt.alertsmanagement import AlertsManagementClient
 import azure.mgmt.alertsmanagement.models as alerts_models
-
-# Celery Application Configuration
-app = Celery('spot_phoenix')
-app.conf.update(
-    broker_url=os.getenv("CELERY_BROKER_URL"),
-    result_backend=os.getenv("CELERY_RESULT_BACKEND"),
-    broker_connection_retry_on_startup=True,
-    task_serializer='json',
-    accept_content=['json'],
-    result_serializer='json',
-    timezone='UTC',
-    enable_utc=True,
-
-    # Ensures reliable task delivery: message is acknowledged only AFTER successful execution
-    task_acks_late=True,
-
-    # Restricts the prefetch buffer to 1 message to enforce strict sequential queue consumption
-    worker_prefetch_multiplier=1
-)
 
 # Shared Redis instance connection designated for distributed state management
 redis_client = redis.Redis(host='redis', port=6379, db=1)
