@@ -37,45 +37,57 @@ This application runs in a separate environment, acts as a Celery worker and tri
 sequenceDiagram
     participant IMDS as Azure IMDS
     participant L as Spot Phoenix Listener (Docker on VM)
-
-    participant C as Celery Broker
-    participant W as Worker Module
-    participant R as Resurrector Module
-
+    participant C as Celery Broker (Queue)
+    participant W as Celery Task (Module A)
+    participant R as Celery Task (Module B)
     participant AZ as Azure API
 
-    L->>IMDS: Poll 169.254.169.254 (1s interval)
-    IMDS-->>L: Eviction Notice
-    L->>L: os.sync() / SIGTERM
-
-    Note over L,C: Listener sends task out of the dying VM
+    loop Poll 169.254.169.254 (1s interval)
+        L->>IMDS: Get Scheduled Events
+    end
+    IMDS-->>L: Eviction Notice (Preempted)
+    
+   
     L->>C: Dispatch Eviction Task
+    L->>L: os.sync()
 
-    C->>R: Trigger Resurrector immediately in background (.delay)
-    R->>R: Start 10m Cooldown Period
+    C->>W: Execute spot_eviction_workflow
 
-    C->>W: Start Worker Module (Main Thread)
-    par Concurrent Workflows
+    W->>C: module_b_resurrector.delay()
+
+    par Handle Eviction Infrastructure
         W->>AZ: Disable Traffic Manager
         W->>AZ: Silence Monitor Alerts
+    and
+        C->>R: Execute module_b_resurrector
     end
 
+    R->>R: Start 10m Cooldown Period (Wait for VM to completely stop)
+
     loop Status Checking
-        R->>AZ: Get instanceView (Check if PowerState/deallocated)
-        AZ-->>R: Return status codes
+        R->>AZ: Get instanceView
+        AZ-->>R: Return PowerState (e.g., deallocated)
     end
 
     loop Start Retry Loop
-       R->>AZ: vm.start()
-       alt Capacity Error
-          AZ-->>R: Capacity Error (Wait 10m)
-          R->>R: Sleep 10m
-       else Success
-         AZ-->>R: VM Running
-       end
+    R->>AZ: vm.start()
+
+    alt Capacity Error
+        AZ-->>R: AllocationFailed / Capacity Error
+        R->>R: Sleep 10m
+
+    else Unexpected API Error
+        AZ-->>R: Other Exception
+        R->>R: Sleep 60s
+
+    else Success
+        AZ-->>R: VM Running
     end
+    end
+
     R->>AZ: Restore Traffic Manager to 'Enabled'
-    AZ-->>L: VM Back Online & Traffic Restored
+    AZ-->>R: Traffic Restored 
+    Note over R: Flow Finished Successfully
 ```
 
 #### Infrastructure diagram
